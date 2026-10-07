@@ -41,7 +41,13 @@ function leggi_() {
   var n = sh.getLastRow();
   if (n < 2) return [];
   return sh.getRange(2, 1, n - 1, 4).getValues().map(function (r) {
-    return { ts: new Date(r[0]), giorno: String(r[1]), ora: String(r[2]), tipo: r[3] };
+    var ts = new Date(r[0]);
+    return {
+      ts: ts,
+      giorno: Utilities.formatDate(ts, TZ, 'yyyy-MM-dd'),
+      ora: Utilities.formatDate(ts, TZ, 'HH:mm:ss'),
+      tipo: r[3]
+    };
   });
 }
 

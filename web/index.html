@@ -80,7 +80,7 @@
     api('timbra').then(function (s) {
       render(s);
       var u = s.oggi[s.oggi.length - 1];
-      $('msg').textContent = '✔ ' + u.tipo + ' registrata alle ' + u.ora.substring(0, 5);
+      $('msg').textContent = u ? '✔ ' + u.tipo + ' registrata alle ' + u.ora.substring(0, 5) : '✔ Timbratura registrata';
     }).catch(errore);
   };
   setInterval(tick, 1000); tick();
