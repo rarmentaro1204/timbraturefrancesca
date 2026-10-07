@@ -9,6 +9,8 @@ var SHEET = 'Timbrature';
 var SHEET_ID = '1I2dV7k-UZ4lOqqUVh7oJ0RncrT0yMMgDCoJ41aI6W1Q'; // Google Sheet "Timbrature Francesca"
 var ENTRATA = 'ENTRATA';
 var USCITA = 'USCITA';
+// PIN per la pagina admin (admin.html). SCEGLINE UNO: finché è vuoto la pagina admin è bloccata.
+var ADMIN_PIN = '';
 
 function json_(o) {
   return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
@@ -19,7 +21,13 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  try { return json_(timbra()); } catch (err) { return json_({ errore: String(err) }); }
+  try {
+    var body = (e && e.postData && e.postData.contents) || '';
+    if (body === 'timbra') return json_(timbra());
+    return json_(admin_(JSON.parse(body)));
+  } catch (err) {
+    return json_({ errore: String(err.message || err) });
+  }
 }
 
 function getSheet_() {
@@ -40,15 +48,18 @@ function leggi_() {
   var sh = getSheet_();
   var n = sh.getLastRow();
   if (n < 2) return [];
-  return sh.getRange(2, 1, n - 1, 4).getValues().map(function (r) {
+  var righe = sh.getRange(2, 1, n - 1, 4).getValues().map(function (r, i) {
     var ts = new Date(r[0]);
     return {
+      riga: i + 2,
       ts: ts,
       giorno: Utilities.formatDate(ts, TZ, 'yyyy-MM-dd'),
       ora: Utilities.formatDate(ts, TZ, 'HH:mm:ss'),
       tipo: r[3]
     };
   });
+  righe.sort(function (a, b) { return a.ts - b.ts; });
+  return righe;
 }
 
 /** Ore lavorate (in minuti) per giorno: accoppia ENTRATA->USCITA dello stesso giorno. */
@@ -256,4 +267,93 @@ function aggiornaReport_() {
   rs.setFrozenRows(1);
   rs.setColumnWidth(1, 150);
   for (var c = 2; c <= 5; c++) rs.setColumnWidth(c, 150);
+}
+
+// ---------------------------------------------------------------------------
+// ADMIN: vedere, modificare, aggiungere ed eliminare timbrature (richiede il PIN)
+// ---------------------------------------------------------------------------
+function admin_(req) {
+  if (!ADMIN_PIN) throw new Error('PIN non impostato: scrivilo in ADMIN_PIN nello script');
+  if (String(req.pin) !== String(ADMIN_PIN)) {
+    Utilities.sleep(1000);
+    throw new Error('PIN errato');
+  }
+  if (req.action === 'dati') return adminDati_();
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var sh = getSheet_();
+    if (req.action === 'aggiungi') {
+      scriviRiga_(sh, null, req.data, req.ora, req.tipo);
+    } else if (req.action === 'modifica') {
+      scriviRiga_(sh, rigaValida_(sh, req.riga), req.data, req.ora, req.tipo);
+    } else if (req.action === 'elimina') {
+      sh.deleteRow(rigaValida_(sh, req.riga));
+    } else {
+      throw new Error('Azione sconosciuta');
+    }
+    var n = sh.getLastRow();
+    if (n > 2) sh.getRange(2, 1, n - 1, 4).sort({ column: 1, ascending: true });
+  } finally {
+    lock.releaseLock();
+  }
+  try { aggiornaReport_(); } catch (err) { /* il report non deve bloccare */ }
+  return adminDati_();
+}
+
+function rigaValida_(sh, riga) {
+  riga = parseInt(riga, 10);
+  if (!(riga >= 2 && riga <= sh.getLastRow())) throw new Error('Riga non valida, ricarica la pagina');
+  return riga;
+}
+
+function scriviRiga_(sh, riga, data, ora, tipo) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data || '')) throw new Error('Data non valida');
+  if (!/^\d{2}:\d{2}/.test(ora || '')) throw new Error('Ora non valida');
+  if (tipo !== ENTRATA && tipo !== USCITA) throw new Error('Tipo non valido');
+  var ts = Utilities.parseDate(data + ' ' + ora.substring(0, 5), TZ, 'yyyy-MM-dd HH:mm');
+  var vals = [ts, Utilities.formatDate(ts, TZ, 'yyyy-MM-dd'), Utilities.formatDate(ts, TZ, 'HH:mm:ss'), tipo];
+  if (riga) sh.getRange(riga, 1, 1, 4).setValues([vals]);
+  else sh.appendRow(vals);
+}
+
+/** Dati del mese attuale e del precedente per la pagina admin. */
+function adminDati_() {
+  var adesso = new Date();
+  var oggi = Utilities.formatDate(adesso, TZ, 'yyyy-MM-dd');
+  var anno = parseInt(oggi.substring(0, 4), 10);
+  var mese = parseInt(oggi.substring(5, 7), 10);
+  var prec = mese === 1 ? (anno - 1) + '-12' : anno + '-' + ('0' + (mese - 1)).slice(-2);
+  var corr = oggi.substring(0, 7);
+
+  var righe = leggi_();
+  var giorni = calcolaGiorni_(righe);
+  var perGiorno = {};
+  righe.forEach(function (r) {
+    (perGiorno[r.giorno] = perGiorno[r.giorno] || []).push({ riga: r.riga, ora: r.ora.substring(0, 5), tipo: r.tipo });
+  });
+
+  function blocco(m) {
+    var out = { mese: m, nome: MESI[parseInt(m.substring(5, 7), 10) - 1] + ' ' + m.substring(0, 4),
+                minuti: 0, giorniLavorati: 0, giorni: [] };
+    Object.keys(giorni).sort().forEach(function (k) {
+      if (k.indexOf(m) !== 0) return;
+      var g = giorni[k];
+      out.minuti += g.minuti;
+      if (g.minuti > 0) out.giorniLavorati++;
+      out.giorni.push({
+        giorno: k,
+        giornoSettimana: GIORNI[new Date(k + 'T12:00:00Z').getUTCDay()],
+        fasce: descrizioneFasce_(g),
+        minuti: Math.round(g.minuti),
+        incompleto: g.incompleto,
+        inCorso: g.incompleto && k === oggi,
+        timbrature: perGiorno[k] || []
+      });
+    });
+    out.minuti = Math.round(out.minuti);
+    return out;
+  }
+  return { oggi: oggi, mesi: [blocco(corr), blocco(prec)] };
 }
