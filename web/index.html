@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timbrature</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1e9e5a">
+<style>
+  :root { --bg:#f4f6f8; --fg:#1b2430; --card:#fff; --in:#1e9e5a; --out:#d9443a; --mut:#6b7684; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12161c; --fg:#eef1f5; --card:#1d242d; --mut:#9aa5b2; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--fg);
+         min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:20px 16px; }
+  h1 { font-size:1.1rem; margin:0 0 4px; color:var(--mut); font-weight:600; }
+  #clock { font-size:3.2rem; font-weight:700; font-variant-numeric: tabular-nums; }
+  #date { color:var(--mut); margin-bottom:24px; text-transform:capitalize; }
+  #btn { width:min(78vw,280px); height:min(78vw,280px); border-radius:50%; border:0; color:#fff;
+         font-size:1.8rem; font-weight:700; cursor:pointer; box-shadow:0 8px 24px rgba(0,0,0,.25); }
+  #btn.in { background:var(--in); } #btn.out { background:var(--out); }
+  #btn:disabled { opacity:.6; }
+  #msg { min-height:1.4em; margin:16px 0; text-align:center; }
+  .warn { color:var(--out); font-weight:600; }
+  .card { background:var(--card); border-radius:14px; padding:14px 18px; width:min(100%,420px); margin-top:12px; }
+  .row { display:flex; justify-content:space-between; padding:4px 0; }
+  .tot { display:flex; gap:12px; width:min(100%,420px); }
+  .tot .card { flex:1; text-align:center; }
+  .tot b { display:block; font-size:1.4rem; }
+  .tot span { color:var(--mut); font-size:.85rem; }
+</style>
+</head>
+<body>
+  <h1>Timbrature · Francesca</h1>
+  <div id="clock">--:--:--</div>
+  <div id="date"></div>
+  <button id="btn" disabled>…</button>
+  <div id="msg"></div>
+  <div class="tot">
+    <div class="card"><b id="hOggi">-</b><span>Oggi</span></div>
+    <div class="card"><b id="hMese">-</b><span>Questo mese</span></div>
+  </div>
+  <div class="card"><div style="color:var(--mut);margin-bottom:6px">Timbrature di oggi</div><div id="lista">-</div></div>
+<script src="config.js"></script>
+<script>
+  var offset = 0, prossimo = null;
+  var $ = function (id) { return document.getElementById(id); };
+  function hm(min) { return Math.floor(min / 60) + 'h ' + String(min % 60).padStart(2, '0') + 'm'; }
+  function tick() {
+    var d = new Date(Date.now() + offset);
+    $('clock').textContent = d.toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome' });
+    $('date').textContent = d.toLocaleDateString('it-IT', { timeZone: 'Europe/Rome', weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  }
+  function render(s) {
+    offset = s.adesso - Date.now();
+    prossimo = s.prossimo;
+    var b = $('btn');
+    b.disabled = false;
+    b.className = s.prossimo === 'ENTRATA' ? 'in' : 'out';
+    b.textContent = s.prossimo === 'ENTRATA' ? 'ENTRATA' : 'USCITA';
+    $('hOggi').textContent = hm(s.minutiOggi);
+    $('hMese').textContent = hm(s.minutiMese);
+    $('lista').innerHTML = s.oggi.length
+      ? s.oggi.map(function (r) { return '<div class="row"><span>' + r.tipo + '</span><b>' + r.ora.substring(0,5) + '</b></div>'; }).join('')
+      : 'Nessuna timbratura';
+    if (s.dimenticata) $('msg').innerHTML = '<span class="warn">Uscita non timbrata il ' + s.dimenticata + '. Avvisa il titolare.</span>';
+  }
+  function errore(e) { $('btn').disabled = false; $('msg').innerHTML = '<span class="warn">Errore: ' + (e && e.message || e) + '</span>'; }
+  function api(action) {
+    if (!window.API_URL) return Promise.reject(new Error('App non ancora collegata al foglio (manca API_URL in config.js)'));
+    var opt = action === 'timbra' ? { method: 'POST', body: 'timbra' } : {};
+    var url = window.API_URL + (action === 'stato' ? '?action=stato' : '');
+    return fetch(url, opt).then(function (r) { return r.json(); }).then(function (j) {
+      if (j.errore) throw new Error(j.errore);
+      return j;
+    });
+  }
+  $('btn').onclick = function () {
+    if (!confirm('Confermi ' + prossimo + '?')) return;
+    $('btn').disabled = true; $('msg').textContent = 'Salvataggio…';
+    api('timbra').then(function (s) {
+      render(s);
+      var u = s.oggi[s.oggi.length - 1];
+      $('msg').textContent = '✔ ' + u.tipo + ' registrata alle ' + u.ora.substring(0, 5);
+    }).catch(errore);
+  };
+  setInterval(tick, 1000); tick();
+  api('stato').then(render).catch(errore);
+</script>
+</body>
+</html>
