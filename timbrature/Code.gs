@@ -17,7 +17,11 @@ function json_(o) {
 }
 
 function doGet(e) {
-  try { return json_(stato()); } catch (err) { return json_({ errore: String(err) }); }
+  try {
+    // La pagina admin controlla la versione prima di inviare il PIN
+    if (e && e.parameter && e.parameter.action === 'versione') return json_({ versione: 2 });
+    return json_(stato());
+  } catch (err) { return json_({ errore: String(err) }); }
 }
 
 function doPost(e) {

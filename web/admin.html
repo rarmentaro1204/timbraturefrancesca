@@ -114,9 +114,17 @@
     }).join('');
   }
 
+  // Una GET non scrive mai nel foglio: serve a capire se lo script è aggiornato prima di inviare il PIN.
+  function controllaVersione() {
+    return fetch(window.API_URL + '?action=versione').then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.versione) throw new Error('Lo script non è aggiornato: incolla il codice nuovo e pubblica una "Nuova versione".');
+    });
+  }
+
   function carica() {
     $('err').textContent = '';
-    return api({ action: 'dati' }).then(function (d) {
+    return controllaVersione().then(function () { return api({ action: 'dati' }); }).then(function (d) {
+      if (!d || !d.mesi) throw new Error('Risposta non valida dallo script');
       $('login').hidden = true; $('app').hidden = false;
       try { sessionStorage.setItem('pin', pin); } catch (e) {}
       render(d);
